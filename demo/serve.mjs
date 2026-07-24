@@ -11,7 +11,7 @@ const dir = fileURLToPath(new URL('.', import.meta.url));
 const PROJECT_FILE = join(dir, '..', 'mcp', 'project.json');
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.webp': 'image/webp', '.mjs': 'text/javascript' };
 const PORT = Number(process.env.PORT) || 8144;
-const HF_KEY = process.env.HIGGSFIELD_KEY || '';
+let HF_KEY = process.env.HIGGSFIELD_KEY || '';
 let genSeq = 0;
 const clipEnd = (c) => c.timelineStart + c.timelineDurationFrames;
 
@@ -61,6 +61,8 @@ const ellipse = (n = 14) => Array.from({ length: n }, (_, i) => { const t = (i /
 const ROUTES = {
   'GET /api/project': async () => projectState(),
   'GET /api/version': async () => ({ version: S.version }),
+  'GET /api/status': async () => ({ backend: true, higgsfield: !!HF_KEY, project: { name: S.log.document.name, version: S.version } }),
+  'POST /api/config': async (b) => { if (typeof b.higgsfieldKey === 'string' && b.higgsfieldKey.trim()) { HF_KEY = b.higgsfieldKey.trim(); try { await writeFile(join(dir, '..', '.env.local'), `HIGGSFIELD_KEY=${HF_KEY}\n`); } catch { /* */ } } return { ok: true, backend: true, higgsfield: !!HF_KEY }; },
   'POST /api/op': async (b) => op({ type: b.type, payload: b.payload }, b.actor || 'human'),
   'POST /api/batch': async (b) => { const results = (b.specs || []).map((s) => S.log.apply(s, { actor: b.actor || 'human' })); S.version++; save(); return { ok: true, results, version: S.version, doc: S.log.document }; },
   'POST /api/undo': async () => { const ok = S.log.undo(); S.version++; save(); return { ok, version: S.version, doc: S.log.document }; },
@@ -73,7 +75,7 @@ const ROUTES = {
   'POST /api/trim': async (b) => op({ type: 'clip.trim', payload: { clipId: b.clipId, ...(b.inSeconds != null ? { sourceIn: fr(b.inSeconds) } : {}), ...(b.outSeconds != null ? { sourceOut: fr(b.outSeconds) } : {}) } }),
   'POST /api/move': async (b) => op({ type: 'clip.move', payload: { clipId: b.clipId, timelineStart: fr(b.atSeconds) } }),
   'POST /api/remove': async (b) => op({ type: 'clip.remove', payload: { clipId: b.clipId } }),
-  'POST /api/vfx': async (b) => b.action === 'segment' ? { ok: true, mode: HF_KEY ? 'real' : 'demo', points: ellipse() } : { ok: true, mode: HF_KEY ? 'real' : 'demo', kind: b.kind || 'image', model: b.model || 'nano_banana_pro', url: placeholder(b.prompt, b.kind), note: HF_KEY ? 'HIGGSFIELD_KEY set' : 'live generation runs through the Higgsfield MCP' },
+  'POST /api/vfx': async (b) => b.action === 'segment' ? { ok: true, mode: 'demo', points: ellipse() } : { ok: true, mode: 'demo', kind: b.kind || 'image', model: b.model || 'nano_banana_pro', url: placeholder(b.prompt, b.kind), note: HF_KEY ? 'key stored — real REST is Phase 1; live gen via the merged MCP' : 'live generation runs through the Higgsfield MCP (see Connect)' },
 };
 
 createServer(async (req, res) => {

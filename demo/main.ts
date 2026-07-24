@@ -6,6 +6,7 @@ import { CommandLog } from '../src/oplog/log';
 import type { VibalDocument, Clip, Track, MediaClip, TextClip, Asset } from '../src/document/types';
 import { mountDock, refreshDock, renderViewerOverlay, hasMask, isEnhanced, getMask, type EditorApi } from './studio';
 import { renderComposite } from './compositor';
+import { mountConnect } from './connect';
 
 const FPS = 30;
 type Tool = 'select' | 'blade';
@@ -186,7 +187,7 @@ export const api: EditorApi = {
   setAspect: (a) => { previewAspect = a; }, getAspect: () => previewAspect,
 };
 
-buildSample(); mountDock(api);
+buildSample(); mountDock(api); mountConnect();
 // dev deep-link: ?sel=<clip index> preselects a clip (pairs with ?tool= handled in the dock)
 { const q = new URLSearchParams(location.search); if (q.get('live')) setLive(true); const si = q.get('sel'); if (si !== null) { const c = allClips(d0())[Number(si)]; if (c) selected = c.clip.id; } }
 render();
