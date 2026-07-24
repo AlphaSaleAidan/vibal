@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VIBAL — Editor (Phase 2 preview)</title>
+<style>
+  :root{
+    --bg:#1a1a1c; --chrome:#242427; --chrome2:#2b2b2f; --panel:#202023; --line:#37373d;
+    --ink:#e9e9ee; --muted:#8b8b95; --dim:#6a6a73;
+    --active:#5e6ad2; --sel:#f5c518;
+    --video:#3f6fb0; --video2:#345d95; --title:#7d5bbe; --title2:#664aa0;
+    --audio:#3aa869; --audio2:#2f8a56; --gen:#b07de0;
+    --ruler:#202024;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
+    font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .app{display:grid;grid-template-rows:38px minmax(0,46%) 34px minmax(0,1fr);height:100vh}
+
+  /* top bar */
+  .topbar{display:flex;align-items:center;gap:12px;padding:0 14px;background:var(--chrome);border-bottom:1px solid var(--line)}
+  .topbar .logo{font-weight:700;letter-spacing:.16em;font-size:14px}
+  .topbar .proj{color:var(--muted);font-size:12px}
+  .topbar .spacer{flex:1}
+  .topbar .badge{font-size:10px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+  .iconbtn{background:var(--chrome2);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:5px 9px;font-size:12px;cursor:pointer}
+  .iconbtn:hover{background:#33333a}
+  .iconbtn:disabled{opacity:.35;cursor:default}
+
+  /* top three panes */
+  .top{display:grid;grid-template-columns:264px minmax(0,1fr) 300px;min-height:0;border-bottom:1px solid var(--line)}
+  .pane{min-height:0;overflow:auto;background:var(--panel)}
+  .pane+.pane{border-left:1px solid var(--line)}
+  .pane .head{position:sticky;top:0;background:var(--chrome);border-bottom:1px solid var(--line);
+    padding:7px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);z-index:2}
+
+  /* browser */
+  .media{display:flex;gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid #2a2a2e;cursor:pointer}
+  .media:hover{background:#26262b}
+  .thumb{width:64px;height:36px;border-radius:4px;flex:0 0 64px;position:relative;overflow:hidden;
+    background:linear-gradient(90deg,#2b2f39,#222530);
+    background-image:repeating-linear-gradient(90deg,rgba(255,255,255,.05) 0 1px,transparent 1px 12px)}
+  .thumb.audiothumb{background:linear-gradient(180deg,#274b38,#1e3a2b)}
+  .thumb .k{position:absolute;left:4px;bottom:2px;font-size:9px;color:#cfe;opacity:.8}
+  .media .mname{font-size:12px}
+  .media .mmeta{font-size:11px;color:var(--muted)}
+  .hint{padding:8px 12px;color:var(--dim);font-size:11px}
+
+  /* viewer */
+  .viewer{display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0d0d0f;position:relative}
+  .stage{aspect-ratio:16/9;max-height:78%;max-width:90%;background:#000;border:1px solid #000;border-radius:4px;
+    display:flex;align-items:center;justify-content:center;position:relative;box-shadow:0 8px 40px rgba(0,0,0,.5)}
+  .stage .card{text-align:center}
+  .stage .big{font-size:26px;font-weight:600;letter-spacing:.02em}
+  .stage .sub{color:var(--muted);font-size:12px;margin-top:6px}
+  .stage .swatch{width:54px;height:54px;border-radius:10px;margin:0 auto 12px}
+  .stage .norender{position:absolute;bottom:8px;left:0;right:0;text-align:center;color:var(--dim);font-size:10px}
+  .transport{display:flex;align-items:center;gap:14px;margin-top:12px}
+  .transport .tc{font:600 15px ui-monospace,SFMono-Regular,Menlo,monospace;color:#dfe3ea;letter-spacing:.04em}
+  .tbtn{width:30px;height:26px;border-radius:6px;background:var(--chrome2);border:1px solid var(--line);color:var(--ink);cursor:pointer;font-size:12px}
+  .tbtn:hover{background:#33333a}
+
+  /* inspector */
+  .insp-tabs{display:flex;gap:4px;padding:8px 10px 0}
+  .insp-tabs button{background:transparent;border:1px solid transparent;border-radius:6px 6px 0 0;color:var(--muted);padding:6px 12px;font-size:12px;cursor:pointer}
+  .insp-tabs button.on{color:var(--ink);background:var(--panel);border-color:var(--line);border-bottom-color:var(--panel)}
+  .insp-body{padding:12px 14px}
+  .prop{display:grid;grid-template-columns:74px 1fr 48px;gap:8px;align-items:center;margin:9px 0}
+  .prop label{color:var(--muted);font-size:11px}
+  .prop input[type=range]{width:100%;accent-color:var(--active)}
+  .prop .val{font:11px ui-monospace,Menlo,monospace;color:var(--ink);text-align:right}
+  .kv{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #2a2a2e;font-size:12px}
+  .kv span:first-child{color:var(--muted)}
+  .kv code{font:11px ui-monospace,Menlo,monospace}
+  .empty{color:var(--dim);font-size:12px;padding:18px 4px;text-align:center}
+  .chip{display:inline-block;font-size:10px;padding:1px 6px;border-radius:999px;background:#3a2f14;color:var(--sel)}
+
+  /* timeline toolbar */
+  .tltoolbar{display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--chrome);border-bottom:1px solid var(--line)}
+  .tltoolbar .grp{display:flex;gap:6px;align-items:center}
+  .tltoolbar .spacer{flex:1}
+  .tltoolbar .zoom{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px}
+  .tltoolbar input[type=range]{accent-color:var(--active)}
+  .tltoolbar .agent{color:var(--sel);border-color:#4a3a1e}
+
+  /* timeline */
+  .tl{display:grid;grid-template-columns:190px minmax(0,1fr);min-height:0;background:#161618}
+  .tlindex{overflow:auto;background:var(--panel);border-right:1px solid var(--line)}
+  .tlindex .ihead{padding:7px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);border-bottom:1px solid var(--line)}
+  .irow{display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid #232327}
+  .irow:hover{background:#26262b}
+  .idot{width:9px;height:9px;border-radius:2px;flex:0 0 9px}
+  .tlscroll{overflow:auto;position:relative}
+  .tlcontent{position:relative}
+  .ruler{position:sticky;top:0;height:22px;background:var(--ruler);border-bottom:1px solid var(--line);z-index:5}
+  .ruler .tick{position:absolute;top:0;height:22px;border-left:1px solid #33333a;padding-left:4px;font:10px ui-monospace,Menlo,monospace;color:var(--dim)}
+  .tlbody{position:relative}
+  .clip{position:absolute;border-radius:5px;overflow:hidden;cursor:pointer;border:1px solid rgba(0,0,0,.4);
+    box-shadow:0 1px 2px rgba(0,0,0,.4);transition:box-shadow .12s,outline-color .12s}
+  .clip .lab{position:absolute;left:6px;bottom:3px;right:6px;font-size:11px;font-weight:600;color:#fff;
+    text-shadow:0 1px 1px rgba(0,0,0,.6);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+  .clip.sel{outline:2px solid var(--sel);outline-offset:-2px;z-index:6}
+  .clip .ai{position:absolute;top:3px;right:4px;font-size:8px;background:rgba(0,0,0,.45);color:#fff;padding:0 4px;border-radius:3px}
+  .clip .film{position:absolute;inset:0;background-image:repeating-linear-gradient(90deg,rgba(0,0,0,.18) 0 1px,transparent 1px 26px)}
+  .clip.video{background:linear-gradient(180deg,var(--video),var(--video2))}
+  .clip.video .top{position:absolute;top:0;left:0;right:0;height:3px;background:#7fb0ff}
+  .clip.title{background:linear-gradient(180deg,var(--title),var(--title2))}
+  .clip.title .top{position:absolute;top:0;left:0;right:0;height:3px;background:#c6a8ff}
+  .clip.generated{background:linear-gradient(180deg,#b98cf5,#9b6ee6)}
+  .clip.audio{background:linear-gradient(180deg,var(--audio),var(--audio2))}
+  .clip.audio .top{position:absolute;top:0;left:0;right:0;height:3px;background:#79e6ab}
+  .connector{position:absolute;width:1px;background:#6f6f7a;z-index:1}
+  .spineband{position:absolute;left:0;right:0;background:rgba(255,255,255,.03);border-top:1px solid #2c2c31;border-bottom:1px solid #2c2c31}
+  .playhead{position:absolute;top:0;width:1px;background:#e5484d;z-index:8;pointer-events:none}
+  .playhead .ph{position:absolute;top:0;left:-5px;width:11px;height:9px;background:#e5484d;border-radius:0 0 3px 3px}
+  wf{display:block}
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="topbar" id="topbar">
+      <span class="logo">VIBAL</span>
+      <span class="proj" id="projName">—</span>
+      <span class="badge">Phase 2 preview · magnetic timeline on the Phase 0 engine</span>
+      <span class="spacer"></span>
+      <button class="iconbtn" data-action="undo" id="undoBtn">↩ Undo</button>
+      <button class="iconbtn" data-action="redo" id="redoBtn">↪ Redo</button>
+    </div>
+
+    <div class="top">
+      <div class="pane">
+        <div class="head">Browser · Media</div>
+        <div id="browserList"></div>
+        <div class="hint">Click a clip to append it to the storyline.</div>
+      </div>
+      <div class="pane viewer">
+        <div class="stage" id="stage"></div>
+        <div class="transport">
+          <button class="tbtn" data-action="toStart">⏮</button>
+          <button class="tbtn" data-action="playpause" id="playBtn">▶</button>
+          <button class="tbtn" data-action="toEnd">⏭</button>
+          <span class="tc" id="tc">00:00:00:00</span>
+        </div>
+      </div>
+      <div class="pane">
+        <div class="head">Inspector</div>
+        <div class="insp-tabs" id="inspTabs">
+          <button data-tab="info" class="on">Info</button>
+          <button data-tab="video">Video</button>
+          <button data-tab="audio">Audio</button>
+        </div>
+        <div class="insp-body" id="inspBody"></div>
+      </div>
+    </div>
+
+    <div class="tltoolbar">
+      <div class="grp">
+        <button class="iconbtn" data-action="split">⊟ Blade</button>
+        <button class="iconbtn agent" data-action="agent">✦ Agent: tighten</button>
+        <button class="iconbtn" data-action="revert" id="revertBtn">Revert batch</button>
+      </div>
+      <div class="spacer"></div>
+      <div class="zoom">Zoom <input type="range" id="zoom" min="1" max="10" step="0.5" value="3" /></div>
+    </div>
+
+    <div class="tl">
+      <div class="tlindex">
+        <div class="ihead">Timeline Index</div>
+        <div id="indexList"></div>
+      </div>
+      <div class="tlscroll" id="tlscroll">
+        <div class="tlcontent" id="tlcontent">
+          <div class="ruler" id="ruler"></div>
+          <div class="tlbody" id="tlbody"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="./bundle.js"></script>
+</body>
+</html>
