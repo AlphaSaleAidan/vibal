@@ -1,6 +1,5 @@
-import { randomUUID } from 'node:crypto';
-
-export const newId = (prefix: string): string => `${prefix}_${randomUUID().slice(0, 8)}`;
+// Isomorphic: global crypto.randomUUID exists in Node 20+ and all modern browsers.
+export const newId = (prefix: string): string => `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
 
 // Kind-prefixed ids for log readability (schema §0 invariant 2).
 export const ID = {
