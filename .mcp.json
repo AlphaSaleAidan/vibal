@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "vibal": {
+      "command": "node",
+      "args": ["mcp/server.mjs"],
+      "env": { "VIBAL_URL": "http://localhost:8144" }
+    }
+  }
+}

@@ -17,6 +17,9 @@ let tool: Tool = 'select';
 let playhead = 0, playing = false, pxf = 3;
 let previewAspect = '16:9';
 let lastBatch: string | null = null;
+// Live (shared-project) mode: mirror + edit the backend project that the VIBAL MCP agent also drives.
+let live = false, serverDoc: VibalDocument | null = null, serverVersion = -1, pollTimer = 0;
+let serverMeta = { canUndo: false, canRedo: false };
 
 function buildSample(): void {
   log = new CommandLog(createDocument({ name: 'Demo Short', frameRate: { num: 30, den: 1 } }));
@@ -37,7 +40,7 @@ function buildSample(): void {
 }
 
 const $ = (id: string) => document.getElementById(id)!;
-const d0 = () => log.document;
+const d0 = () => (live && serverDoc ? serverDoc : log.document);
 const allClips = (d: VibalDocument) => d.tracks.flatMap((t) => t.clips.map((clip) => ({ track: t, clip })));
 const find = (id: string) => allClips(d0()).find((x) => x.clip.id === id) ?? null;
 const clipEnd = (c: Clip) => c.timelineStart + c.timelineDurationFrames;
@@ -50,8 +53,19 @@ const spine = () => d0().tracks.find((t) => t.id === spineTrackId)!;
 const clipAtPlayhead = () => spine().clips.find((c) => playhead >= c.timelineStart && playhead < clipEnd(c)) ?? null;
 const frameAtX = (clientX: number) => { const r = $('tlcontent').getBoundingClientRect(); return Math.max(0, Math.round((clientX - r.left) / pxf)); };
 
-function apply(type: string, payload: any, actor: 'human' | 'agent' = 'human') { try { log.apply({ type: type as any, payload }, { actor }); } catch { /* overlap etc. ignored */ } }
-function applyBatch(specs: { type: string; payload: any }[], plan: string, actor: 'human' | 'agent' = 'agent') { lastBatch = log.applyBatch(specs as any, { actor, plan }).batchId; }
+function apply(type: string, payload: any, actor: 'human' | 'agent' = 'human') {
+  if (live) { fetch('/api/op', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type, payload, actor }) }).then(syncProject).catch(() => {}); return; }
+  try { log.apply({ type: type as any, payload }, { actor }); } catch { /* overlap etc. ignored */ }
+}
+function applyBatch(specs: { type: string; payload: any }[], plan: string, actor: 'human' | 'agent' = 'agent') {
+  if (live) { fetch('/api/batch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ specs, plan, actor }) }).then(syncProject).catch(() => {}); return; }
+  lastBatch = log.applyBatch(specs as any, { actor, plan }).batchId;
+}
+async function syncProject() { try { const j = await (await fetch('/api/project')).json(); serverDoc = j.doc; serverMeta = { canUndo: j.canUndo, canRedo: j.canRedo }; serverVersion = j.version; render(); } catch { /* backend down */ } }
+async function pollLoop() { if (!live) return; try { const j = await (await fetch('/api/version')).json(); if (j.version !== serverVersion) await syncProject(); } catch { /* */ } if (live) pollTimer = window.setTimeout(pollLoop, 900); }
+function setLive(on: boolean) { live = on; selected = null; if (on) { syncProject(); pollLoop(); } else { clearTimeout(pollTimer); render(); } }
+function doUndo() { if (live) fetch('/api/undo', { method: 'POST' }).then(syncProject); else { log.undo(); render(); } }
+function doRedo() { if (live) fetch('/api/redo', { method: 'POST' }).then(syncProject); else { log.redo(); render(); } }
 function appendAsset(name: string): void { const id = assetIds[name]; if (!id) return; const a = d0().assets[id]; const start = spine().clips.reduce((m, c) => Math.max(m, clipEnd(c)), 0); const clip = createMediaClip({ assetId: id, kind: a.kind === 'audio' ? 'audio' : 'video', sourceIn: 0, sourceOut: Math.min(120, a.durationFrames ?? 120), timelineStart: start }); apply('clip.add', { trackId: spineTrackId, clip }); selected = clip.id; }
 function bladeAt(frame: number): void { const c = allClips(d0()).find((x) => frame > x.clip.timelineStart && frame < clipEnd(x.clip) && x.clip.kind !== 'text'); if (c) apply('clip.split', { clipId: c.clip.id, atFrame: frame }); }
 function deleteSelected(ripple = false): void { const f = selected ? find(selected) : null; if (!f) return; if (ripple && f.clip.kind !== 'text') apply('ripple.delete', { trackId: f.track.id, startFrame: f.clip.timelineStart, endFrame: clipEnd(f.clip) }); else apply(f.clip.kind === 'text' ? 'text.remove' : 'clip.remove', { clipId: selected }); selected = null; }
@@ -109,7 +123,10 @@ function render(): void {
   $('projName').textContent = d0().name; renderBrowser(); renderViewer(); renderTimeline(); renderIndex(); refreshDock(api);
   document.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.tool === tool));
   $('tlscroll').className = 'tlscroll' + (tool === 'blade' ? ' blade' : '');
-  ($('undoBtn') as HTMLButtonElement).disabled = !log.canUndo(); ($('redoBtn') as HTMLButtonElement).disabled = !log.canRedo(); ($('revertBtn') as HTMLButtonElement).disabled = !lastBatch;
+  ($('undoBtn') as HTMLButtonElement).disabled = !(live ? serverMeta.canUndo : log.canUndo());
+  ($('redoBtn') as HTMLButtonElement).disabled = !(live ? serverMeta.canRedo : log.canRedo());
+  ($('revertBtn') as HTMLButtonElement).disabled = live || !lastBatch;
+  const lb = $('liveBtn'); lb.textContent = live ? '◉ Live · shared project' : '○ Solo'; lb.style.color = live ? '#79e6ab' : ''; lb.style.borderColor = live ? '#2f8a56' : '';
   $('hud').textContent = `${tool} · ${selected ? clipName(find(selected)!.clip) : 'no selection'} · ${tc(playhead)}`;
 }
 
@@ -147,14 +164,14 @@ document.addEventListener('click', (e) => {
   const asset = t.closest('[data-asset]') as HTMLElement | null; if (asset) { appendAsset(asset.dataset.asset!); render(); return; }
   const toolBtn = t.closest('[data-tool]') as HTMLElement | null; if (toolBtn) { tool = toolBtn.dataset.tool as Tool; render(); return; }
   const act = (t.closest('[data-action]') as HTMLElement | null)?.dataset.action; if (!act) return;
-  ({ undo: () => log.undo(), redo: () => log.redo(), agent: agentTighten, revert: () => { if (lastBatch && log.revertBatch(lastBatch)) lastBatch = null; }, addTitle: () => (selected = addTitleAt(playhead)), marker: addMarker, delete: () => deleteSelected(false), ripple: () => deleteSelected(true), toStart: () => (playhead = 0), toEnd: () => (playhead = d0().durationFrames), playpause: togglePlay } as Record<string, () => void>)[act]?.(); render();
+  ({ undo: doUndo, redo: doRedo, live: () => setLive(!live), agent: agentTighten, revert: () => { if (lastBatch && log.revertBatch(lastBatch)) lastBatch = null; }, addTitle: () => (selected = addTitleAt(playhead)), marker: addMarker, delete: () => deleteSelected(false), ripple: () => deleteSelected(true), toStart: () => (playhead = 0), toEnd: () => (playhead = d0().durationFrames), playpause: togglePlay } as Record<string, () => void>)[act]?.(); render();
 });
 document.addEventListener('change', (e) => { const inp = e.target as HTMLInputElement; const prop = inp.dataset.prop; if (!prop || !selected) return; const v = Number(inp.value); if (prop === 'volume') apply('clip.setVolume', { clipId: selected, volume: v }); else if (prop === 'speed') apply('clip.setSpeed', { clipId: selected, speed: v }); else apply('clip.setTransform', { clipId: selected, transform: { [prop]: v } }); render(); });
 document.addEventListener('input', (e) => { const inp = e.target as HTMLInputElement; if (inp.dataset.prop) { const el = document.getElementById('val-' + inp.dataset.prop); if (el) el.textContent = Number(inp.value).toFixed(2); } });
 function scrub(ev: MouseEvent) { playhead = frameAtX(ev.clientX); renderViewer(); renderTimeline(); $('hud').textContent = `${tool} · ${selected ? clipName(find(selected)!.clip) : 'no selection'} · ${tc(playhead)}`; }
 $('ruler').addEventListener('mousedown', (ev) => { scrub(ev as MouseEvent); const mv = (m: MouseEvent) => scrub(m); const up = () => { removeEventListener('mousemove', mv); removeEventListener('mouseup', up); }; addEventListener('mousemove', mv); addEventListener('mouseup', up); });
 $('zoom').addEventListener('input', (e) => { pxf = Number((e.target as HTMLInputElement).value); renderTimeline(); });
-window.addEventListener('keydown', (e) => { if ((e.target as HTMLElement).matches('input,textarea,select')) return; const meta = e.metaKey || e.ctrlKey; if (meta && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? log.redo() : log.undo(); render(); return; } const map: Record<string, () => void> = { ' ': togglePlay, a: () => (tool = 'select'), b: () => (tool = 'blade'), m: addMarker, t: () => (selected = addTitleAt(playhead)), Delete: () => deleteSelected(e.shiftKey), Backspace: () => deleteSelected(e.shiftKey), ArrowLeft: () => (playhead = Math.max(0, playhead - (e.shiftKey ? FPS : 1))), ArrowRight: () => (playhead += e.shiftKey ? FPS : 1), '=': () => (pxf = Math.min(12, pxf + 1)), '-': () => (pxf = Math.max(1, pxf - 1)) }; const fn = map[e.key]; if (fn) { e.preventDefault(); fn(); render(); } });
+window.addEventListener('keydown', (e) => { if ((e.target as HTMLElement).matches('input,textarea,select')) return; const meta = e.metaKey || e.ctrlKey; if (meta && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; } const map: Record<string, () => void> = { ' ': togglePlay, a: () => (tool = 'select'), b: () => (tool = 'blade'), m: addMarker, t: () => (selected = addTitleAt(playhead)), Delete: () => deleteSelected(e.shiftKey), Backspace: () => deleteSelected(e.shiftKey), ArrowLeft: () => (playhead = Math.max(0, playhead - (e.shiftKey ? FPS : 1))), ArrowRight: () => (playhead += e.shiftKey ? FPS : 1), '=': () => (pxf = Math.min(12, pxf + 1)), '-': () => (pxf = Math.max(1, pxf - 1)) }; const fn = map[e.key]; if (fn) { e.preventDefault(); fn(); render(); } });
 
 let raf = 0, lastT = 0;
 function togglePlay() { playing = !playing; if (playing) { lastT = performance.now(); raf = requestAnimationFrame(tick); } else cancelAnimationFrame(raf); }
@@ -171,5 +188,5 @@ export const api: EditorApi = {
 
 buildSample(); mountDock(api);
 // dev deep-link: ?sel=<clip index> preselects a clip (pairs with ?tool= handled in the dock)
-{ const q = new URLSearchParams(location.search); const si = q.get('sel'); if (si !== null) { const c = allClips(d0())[Number(si)]; if (c) selected = c.clip.id; } }
+{ const q = new URLSearchParams(location.search); if (q.get('live')) setLive(true); const si = q.get('sel'); if (si !== null) { const c = allClips(d0())[Number(si)]; if (c) selected = c.clip.id; } }
 render();

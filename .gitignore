@@ -7,3 +7,5 @@ dist/
 node_modules/
 coverage/
 demo/bundle.js
+mcp/engine.node.mjs
+mcp/project.json
