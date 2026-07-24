@@ -1,0 +1,17 @@
+{
+  "name": "vibal",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI-native, self-hostable video editor — the agent edits a JSON timeline through a command log; the document renders the video.",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

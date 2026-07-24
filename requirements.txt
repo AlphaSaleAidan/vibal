@@ -1,0 +1,5 @@
+# Python side is used ONLY as the OpenTimelineIO interchange engine (OTIO <-> FCPXML).
+# No custom logic lives here; our document<->OTIO mapping is in TypeScript (src/interchange).
+# Install into a venv:  python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+opentimelineio==0.18.1
+otio-fcpx-xml-adapter
