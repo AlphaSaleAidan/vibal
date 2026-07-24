@@ -21,6 +21,7 @@ let lastBatch: string | null = null;
 // Live (shared-project) mode: mirror + edit the backend project that the VIBAL MCP agent also drives.
 let live = false, serverDoc: VibalDocument | null = null, serverVersion = -1, pollTimer = 0;
 let serverMeta = { canUndo: false, canRedo: false };
+let lanes: { trackId: string; top: number; bottom: number }[] = []; // timeline lane rects (for drag-drop)
 
 function buildSample(): void {
   log = new CommandLog(createDocument({ name: 'Demo Short', frameRate: { num: 30, den: 1 } }));
@@ -71,7 +72,8 @@ async function pollLoop() { if (!live) return; try { const j = await (await fetc
 function setLive(on: boolean) { live = on; selected = null; if (on) { syncProject(); pollLoop(); } else { clearTimeout(pollTimer); render(); } }
 function doUndo() { if (live) fetch('/api/undo', { method: 'POST' }).then(syncProject); else { log.undo(); render(); } }
 function doRedo() { if (live) fetch('/api/redo', { method: 'POST' }).then(syncProject); else { log.redo(); render(); } }
-function appendAsset(name: string): void { const id = assetIds[name]; if (!id) return; const a = d0().assets[id]; const start = spine().clips.reduce((m, c) => Math.max(m, clipEnd(c)), 0); const clip = createMediaClip({ assetId: id, kind: a.kind === 'audio' ? 'audio' : 'video', sourceIn: 0, sourceOut: Math.min(120, a.durationFrames ?? 120), timelineStart: start }); apply('clip.add', { trackId: spineTrackId, clip }); selected = clip.id; }
+const dynSpine = () => d0().tracks.filter((t) => t.kind === 'video').sort((a, b) => a.order - b.order)[0];
+function appendAsset(name: string): void { const a = Object.values(d0().assets).find((x) => x.originalName === name); const sp = dynSpine(); if (!a || !sp) return; const start = sp.clips.reduce((m, c) => Math.max(m, clipEnd(c)), 0); const clip = createMediaClip({ assetId: a.id, kind: a.kind === 'audio' ? 'audio' : 'video', sourceIn: 0, sourceOut: Math.min(120, a.durationFrames ?? 120), timelineStart: start }); apply('clip.add', { trackId: sp.id, clip }); selected = clip.id; }
 function bladeAt(frame: number): void { const c = allClips(d0()).find((x) => frame > x.clip.timelineStart && frame < clipEnd(x.clip) && x.clip.kind !== 'text'); if (c) apply('clip.split', { clipId: c.clip.id, atFrame: frame }); }
 function deleteSelected(ripple = false): void { const f = selected ? find(selected) : null; if (!f) return; if (ripple && f.clip.kind !== 'text') apply('ripple.delete', { trackId: f.track.id, startFrame: f.clip.timelineStart, endFrame: clipEnd(f.clip) }); else apply(f.clip.kind === 'text' ? 'text.remove' : 'clip.remove', { clipId: selected }); selected = null; }
 function addTitleAt(frame: number, content = 'Title'): string { const d = d0(); let tt = d.tracks.find((t) => t.kind === 'text'); if (!tt) { tt = createTrack('text', { name: 'Titles', order: 3 }); apply('track.add', { track: tt }); } const clip = createTextClip({ content, timelineStart: Math.round(frame), timelineDurationFrames: 60 }); apply('text.add', { trackId: tt.id, clip }); return clip.id; }
@@ -87,7 +89,7 @@ function addGeneratedClip(o: { uri: string; kind: 'image' | 'video'; name: strin
 
 // ---------- render ----------
 function renderBrowser(): void {
-  $('browserList').innerHTML = Object.values(d0().assets).map((a) => { const audio = a.kind === 'audio'; const vh = 200 + (hue(a.originalName) % 46); const bg = audio ? 'linear-gradient(180deg,#274b38,#1e3a2b)' : `linear-gradient(120deg,hsl(${vh} 42% 32%),hsl(${vh + 16} 38% 20%))`; return `<div class="media" data-asset="${a.originalName}"><div class="thumb" style="background:${bg}"><span class="k">${a.kind}</span></div><div><div class="mname">${a.originalName}</div><div class="mmeta">${a.durationFrames ?? '—'}f · ${a.kind}</div></div></div>`; }).join('');
+  $('browserList').innerHTML = Object.values(d0().assets).map((a) => { const audio = a.kind === 'audio'; const vh = 200 + (hue(a.originalName) % 46); const bg = audio ? 'linear-gradient(180deg,#274b38,#1e3a2b)' : `linear-gradient(120deg,hsl(${vh} 42% 32%),hsl(${vh + 16} 38% 20%))`; return `<div class="media" draggable="true" data-asset="${a.originalName}"><div class="thumb" style="background:${bg}"><span class="k">${a.kind}</span></div><div><div class="mname">${a.originalName}</div><div class="mmeta">${a.durationFrames ?? '—'}f · ${a.kind}</div></div></div>`; }).join('');
 }
 // Draw-only: repaint the persistent canvas (never rebuilds DOM). Cheap enough for 60fps playback.
 function drawViewer(): void {
@@ -118,9 +120,11 @@ function renderTimeline(): void {
     return `<div class="clip ${cls}${c.id === selected ? ' sel' : ''}" data-clip="${c.id}" style="left:${left.toFixed(1)}px;top:${top}px;width:${w.toFixed(1)}px;height:${h}px;${bg}"><div class="top"></div>${inner}${badges}${roto}${tr}<div class="handle l" data-handle="l" data-clip="${c.id}"></div><div class="handle r" data-handle="r" data-clip="${c.id}"></div><div class="lab">${clipName(c)}</div></div>`;
   };
   let html = `<div class="spineband" style="top:${spineTop - 4}px;height:${spineH + 8}px"></div>`;
-  above.forEach((t, i) => { const top = spineTop - (i + 1) * laneH; for (const c of t.clips) { html += clipHtml(c, top, laneH - 8); html += `<div class="connector" style="left:${(c.timelineStart * pxf).toFixed(1)}px;top:${top + laneH - 8}px;height:${spineTop - top - laneH + 8}px"></div>`; } });
+  lanes = [];
+  above.forEach((t, i) => { const top = spineTop - (i + 1) * laneH; lanes.push({ trackId: t.id, top, bottom: top + laneH - 8 }); for (const c of t.clips) { html += clipHtml(c, top, laneH - 8); html += `<div class="connector" style="left:${(c.timelineStart * pxf).toFixed(1)}px;top:${top + laneH - 8}px;height:${spineTop - top - laneH + 8}px"></div>`; } });
+  lanes.push({ trackId: spineTrackId, top: spineTop, bottom: spineTop + spineH });
   for (const c of spine().clips) html += clipHtml(c, spineTop, spineH);
-  below.forEach((t, j) => { for (const c of t.clips) html += clipHtml(c, belowTop + j * laneH, laneH - 8); });
+  below.forEach((t, j) => { const top = belowTop + j * laneH; lanes.push({ trackId: t.id, top, bottom: top + laneH - 8 }); for (const c of t.clips) html += clipHtml(c, top, laneH - 8); });
   for (const m of d.markers) html += `<div class="marker" data-marker="${m.id}" style="left:${(m.frame * pxf).toFixed(1)}px"><div class="flag"></div><div class="stem" style="height:${contentH}px"></div></div>`;
   html += `<div class="playhead" style="left:${(playhead * pxf).toFixed(1)}px;height:${contentH}px"><div class="ph"></div></div><div class="snapguide" id="snapguide" style="height:${contentH}px"></div>`;
   $('tlbody').innerHTML = html;
@@ -183,6 +187,29 @@ document.addEventListener('input', (e) => { const inp = e.target as HTMLInputEle
 function scrub(ev: MouseEvent) { playhead = frameAtX(ev.clientX); movePlayhead(); $('hud').textContent = `${tool} · ${selected ? clipName(find(selected)!.clip) : 'no selection'} · ${tc(playhead)}`; }
 $('ruler').addEventListener('mousedown', (ev) => { scrub(ev as MouseEvent); const mv = (m: MouseEvent) => scrub(m); const up = () => { removeEventListener('mousemove', mv); removeEventListener('mouseup', up); }; addEventListener('mousemove', mv); addEventListener('mouseup', up); });
 $('zoom').addEventListener('input', (e) => { pxf = Number((e.target as HTMLInputElement).value); renderTimeline(); });
+
+// ---------- drag media from the Browser into the timeline (Final Cut-style) ----------
+let dropline: HTMLElement | null = null;
+function trackAtY(clientY: number): string { const r = $('tlbody').getBoundingClientRect(); const y = clientY - r.top; for (const ln of lanes) if (y >= ln.top - 4 && y <= ln.bottom + 4) return ln.trackId; return dynSpine()?.id ?? ''; }
+function snapDropFrame(clientX: number, trackId: string): number { let frame = frameAtX(clientX); const track = d0().tracks.find((t) => t.id === trackId); const targets = [0]; if (track) for (const c of track.clips) targets.push(c.timelineStart, clipEnd(c)); const th = Math.max(2, Math.round(8 / pxf)); for (const t of targets) if (Math.abs(t - frame) <= th) { frame = t; break; } return frame; }
+function freeStart(track: Track, frame: number, dur: number): number { let start = Math.max(0, frame); for (const c of [...track.clips].sort((a, b) => a.timelineStart - b.timelineStart)) { const s = c.timelineStart, e = clipEnd(c); if (start < e && s < start + dur) start = e; } return start; }
+function showDrop(e: DragEvent): void { const frame = snapDropFrame(e.clientX, trackAtY(e.clientY)); if (!dropline) { dropline = document.createElement('div'); dropline.style.cssText = 'position:absolute;top:0;width:2px;background:#5ee0ff;z-index:9;pointer-events:none;box-shadow:0 0 7px #5ee0ff'; $('tlbody').appendChild(dropline); } dropline.style.left = (frame * pxf).toFixed(1) + 'px'; dropline.style.height = $('tlbody').style.height || '100%'; }
+function hideDrop(): void { dropline?.remove(); dropline = null; }
+function dropAsset(name: string, e: DragEvent): void {
+  const a = Object.values(d0().assets).find((x) => x.originalName === name); if (!a) return;
+  let track = d0().tracks.find((t) => t.id === trackAtY(e.clientY));
+  if (a.kind === 'audio' && (!track || track.kind !== 'audio')) track = d0().tracks.find((t) => t.kind === 'audio');
+  else if (a.kind !== 'audio' && (!track || track.kind === 'audio' || track.kind === 'effect')) track = dynSpine();
+  if (!track) track = dynSpine(); if (!track) return;
+  const dur = Math.min(90, a.durationFrames ?? 90);
+  const start = freeStart(track, snapDropFrame(e.clientX, track.id), dur);
+  const clip = createMediaClip({ assetId: a.id, kind: a.kind === 'audio' ? 'audio' : 'video', sourceIn: 0, sourceOut: dur, timelineStart: start });
+  apply('clip.add', { trackId: track.id, clip }); selected = clip.id; render();
+}
+document.addEventListener('dragstart', (e) => { const m = (e.target as HTMLElement).closest('[data-asset]') as HTMLElement | null; if (!m || !e.dataTransfer) return; e.dataTransfer.setData('text/vibal-asset', m.dataset.asset!); e.dataTransfer.effectAllowed = 'copy'; });
+$('tlscroll').addEventListener('dragover', (e) => { const dt = (e as DragEvent).dataTransfer; if (!dt || !dt.types.includes('text/vibal-asset')) return; e.preventDefault(); dt.dropEffect = 'copy'; showDrop(e as DragEvent); });
+$('tlscroll').addEventListener('dragleave', (e) => { if (e.target === $('tlscroll')) hideDrop(); });
+$('tlscroll').addEventListener('drop', (e) => { const dt = (e as DragEvent).dataTransfer; const name = dt?.getData('text/vibal-asset'); hideDrop(); if (!name) return; e.preventDefault(); dropAsset(name, e as DragEvent); });
 window.addEventListener('keydown', (e) => { if ((e.target as HTMLElement).matches('input,textarea,select')) return; const meta = e.metaKey || e.ctrlKey; if (meta && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; } const map: Record<string, () => void> = { ' ': togglePlay, a: () => (tool = 'select'), b: () => (tool = 'blade'), m: addMarker, t: () => (selected = addTitleAt(playhead)), Delete: () => deleteSelected(e.shiftKey), Backspace: () => deleteSelected(e.shiftKey), ArrowLeft: () => (playhead = Math.max(0, playhead - (e.shiftKey ? FPS : 1))), ArrowRight: () => (playhead += e.shiftKey ? FPS : 1), '=': () => (pxf = Math.min(12, pxf + 1)), '-': () => (pxf = Math.max(1, pxf - 1)) }; const fn = map[e.key]; if (fn) { e.preventDefault(); fn(); render(); } });
 
 let raf = 0, lastT = 0;
