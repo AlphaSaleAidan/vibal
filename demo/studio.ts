@@ -125,10 +125,17 @@ function addTransition(style: string) {
   API.apply('transition.add', { transition: createTransition({ trackId: f.track.id, type: map[style] ?? 'crossDissolve', durationFrames: transDur, fromClipId: c.id, toClipId: next ? next.id : null, params: { ai: true, style } }) });
 }
 function autoCaption() {
-  const f = selClip(); if (!f) return; const c = f.clip; const d = API.doc(); let tt = d.tracks.find((t) => t.kind === 'text');
-  const specs: any[] = []; if (!tt) { tt = createTrack('text', { name: 'Captions', order: 6 }); specs.push({ type: 'track.add', payload: { track: tt } }); }
+  const f = selClip(); if (!f) return; const c = f.clip; const d = API.doc();
+  const specs: any[] = []; let tt = d.tracks.find((t) => t.name === 'Captions');
+  if (!tt) { tt = createTrack('text', { name: 'Captions', order: 7 }); specs.push({ type: 'track.add', payload: { track: tt } }); }
+  const occ: Array<[number, number]> = tt.clips.map((x) => [x.timelineStart, x.timelineStart + x.timelineDurationFrames]);
   const lines = ['this changes', 'everything', 'watch closely', 'right now']; const s0 = c.timelineStart, span = API.clipEnd(c) - s0; const N = 4, seg = Math.max(20, Math.floor(span / N));
-  for (let i = 0; i < N; i++) specs.push({ type: 'text.add', payload: { trackId: tt.id, clip: createTextClip({ content: lines[i], timelineStart: s0 + i * seg, timelineDurationFrames: seg - 2 }) } });
+  for (let i = 0; i < N; i++) {
+    const dur = seg - 2; let start = s0 + i * seg, moved = true;
+    while (moved) { moved = false; for (const [a, b] of occ) if (start < b && a < start + dur) { start = b; moved = true; } }
+    occ.push([start, start + dur]);
+    specs.push({ type: 'text.add', payload: { trackId: tt.id, clip: createTextClip({ content: lines[i], timelineStart: start, timelineDurationFrames: dur }) } });
+  }
   API.applyBatch(specs, `Auto-caption "${API.clipName(c)}" (${capStyle})`);
 }
 function enhance(kind: string) { const sel = API.selectedClipId; if (!sel) return; enhanced.add(sel); API.render(); }

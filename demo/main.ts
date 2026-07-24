@@ -22,6 +22,10 @@ let lastBatch: string | null = null;
 let live = false, serverDoc: VibalDocument | null = null, serverVersion = -1, pollTimer = 0;
 let serverMeta = { canUndo: false, canRedo: false };
 let lanes: { trackId: string; top: number; bottom: number }[] = []; // timeline lane rects (for drag-drop)
+// media organizer state (client-local metadata, keyed by asset name)
+let orgView: 'list' | 'grid' = 'list', orgCollection = 'all', orgSearch = '';
+const favorites = new Set<string>();
+const bins = new Map<string, Set<string>>();
 
 function buildSample(): void {
   log = new CommandLog(createDocument({ name: 'Demo Short', frameRate: { num: 30, den: 1 } }));
@@ -88,8 +92,29 @@ function addGeneratedClip(o: { uri: string; kind: 'image' | 'video'; name: strin
 }
 
 // ---------- render ----------
+function filterAssets(col: string, q: string): Asset[] {
+  let l = Object.values(d0().assets);
+  if (col === 'video') l = l.filter((a) => a.kind === 'video' && !a.generation);
+  else if (col === 'audio') l = l.filter((a) => a.kind === 'audio');
+  else if (col === 'generated') l = l.filter((a) => a.generation);
+  else if (col === 'fav') l = l.filter((a) => favorites.has(a.originalName));
+  else if (col.startsWith('bin:')) { const s = bins.get(col.slice(4)); l = l.filter((a) => s?.has(a.originalName)); }
+  if (q) l = l.filter((a) => a.originalName.toLowerCase().includes(q.toLowerCase()));
+  return l;
+}
 function renderBrowser(): void {
-  $('browserList').innerHTML = Object.values(d0().assets).map((a) => { const audio = a.kind === 'audio'; const vh = 200 + (hue(a.originalName) % 46); const bg = audio ? 'linear-gradient(180deg,#274b38,#1e3a2b)' : `linear-gradient(120deg,hsl(${vh} 42% 32%),hsl(${vh + 16} 38% 20%))`; return `<div class="media" draggable="true" data-asset="${a.originalName}"><div class="thumb" style="background:${bg}"><span class="k">${a.kind}</span></div><div><div class="mname">${a.originalName}</div><div class="mmeta">${a.durationFrames ?? '—'}f · ${a.kind}</div></div></div>`; }).join('');
+  const cols: Array<[string, string]> = [['all', 'All'], ['video', 'Video'], ['audio', 'Audio'], ['generated', 'Gen'], ['fav', '★']];
+  const item = (a: Asset) => {
+    const vh = 200 + (hue(a.originalName) % 46);
+    const bg = a.kind === 'audio' ? 'linear-gradient(180deg,#274b38,#1e3a2b)' : `linear-gradient(120deg,hsl(${vh} 42% 32%),hsl(${vh + 16} 38% 20%))`;
+    return `<div class="media" draggable="true" data-asset="${a.originalName}"><div class="thumb" style="background:${bg}"><span class="k">${a.kind}</span></div><div class="meta2"><div class="mname">${a.originalName}</div><div class="mmeta">${a.durationFrames ?? '—'}f · ${a.kind}${a.generation ? ' · gen' : ''}</div></div><span class="fav ${favorites.has(a.originalName) ? 'on' : ''}" data-fav="${a.originalName}">★</span></div>`;
+  };
+  const binChips = [...bins.keys()].map((b) => `<span class="orgchip ${orgCollection === 'bin:' + b ? 'on' : ''}" data-orgcol="bin:${b}" data-bin="${b}">▸ ${b} ${bins.get(b)!.size}</span>`).join('');
+  const list = filterAssets(orgCollection, orgSearch);
+  $('browserList').innerHTML = `
+    <div class="org-top"><input id="orgSearch" placeholder="Search clips…" value="${orgSearch}"/><button data-orgview="list" class="${orgView === 'list' ? 'on' : ''}" title="List">☰</button><button data-orgview="grid" class="${orgView === 'grid' ? 'on' : ''}" title="Grid">▦</button></div>
+    <div class="org-cols">${cols.map(([id, l]) => `<span class="orgchip ${orgCollection === id ? 'on' : ''}" data-orgcol="${id}">${l} ${filterAssets(id, '').length}</span>`).join('')}${binChips}<span class="orgchip add" data-orgadd>+ Bin</span></div>
+    <div class="org-body ${orgView}">${list.map(item).join('') || '<div class="hint">Empty. Drag a clip onto a bin chip to add it here.</div>'}</div>`;
 }
 // Draw-only: repaint the persistent canvas (never rebuilds DOM). Cheap enough for 60fps playback.
 function drawViewer(): void {
@@ -99,7 +124,7 @@ function drawViewer(): void {
   $('tc').textContent = tc(playhead); $('playBtn').textContent = playing ? '⏸' : '▶';
 }
 // Playback/scrub path: move the playhead element + redraw the canvas ONLY (no timeline rebuild).
-function movePlayhead(): void { const ph = document.getElementById('playhead'); if (ph) ph.style.left = (playhead * pxf).toFixed(1) + 'px'; drawViewer(); }
+function movePlayhead(): void { const ph = document.getElementById('playhead'); if (ph) ph.style.transform = `translateX(${(playhead * pxf).toFixed(2)}px)`; drawViewer(); }
 function renderViewer(): void { $('stage').style.aspectRatio = previewAspect.replace(':', '/'); drawViewer(); renderViewerOverlay(api); }
 function renderTimeline(): void {
   const d = d0(); const dur = Math.max(d.durationFrames, 300); const laneH = 54;
@@ -126,7 +151,7 @@ function renderTimeline(): void {
   for (const c of spine().clips) html += clipHtml(c, spineTop, spineH);
   below.forEach((t, j) => { const top = belowTop + j * laneH; lanes.push({ trackId: t.id, top, bottom: top + laneH - 8 }); for (const c of t.clips) html += clipHtml(c, top, laneH - 8); });
   for (const m of d.markers) html += `<div class="marker" data-marker="${m.id}" style="left:${(m.frame * pxf).toFixed(1)}px"><div class="flag"></div><div class="stem" style="height:${contentH}px"></div></div>`;
-  html += `<div class="playhead" style="left:${(playhead * pxf).toFixed(1)}px;height:${contentH}px"><div class="ph"></div></div><div class="snapguide" id="snapguide" style="height:${contentH}px"></div>`;
+  html += `<div class="playhead" id="playhead" style="left:0;transform:translateX(${(playhead * pxf).toFixed(2)}px);height:${contentH}px"><div class="ph"></div></div><div class="snapguide" id="snapguide" style="height:${contentH}px"></div>`;
   $('tlbody').innerHTML = html;
 }
 function renderIndex(): void { $('indexList').innerHTML = allClips(d0()).sort((a, b) => a.clip.timelineStart - b.clip.timelineStart).map(({ clip }) => { const col = clipClass(clip) === 'title' ? 'var(--title)' : clipClass(clip) === 'audio' ? 'var(--audio)' : 'var(--video)'; return `<div class="irow ${clip.id === selected ? 'on' : ''}" data-clip="${clip.id}"><span class="idot" style="background:${col}"></span>${clipName(clip)}</div>`; }).join(''); }
@@ -148,6 +173,7 @@ function snapTargets(except: string): number[] { const s = new Set<number>([0, M
 function snap(f: number, t: number[]): { f: number; hit: number | null } { const th = Math.max(1, Math.round(6 / pxf)); let best: number | null = null, bd = th + 1; for (const x of t) { const dd = Math.abs(x - f); if (dd <= th && dd < bd) { bd = dd; best = x; } } return best === null ? { f, hit: null } : { f: best, hit: best }; }
 $('tlbody').addEventListener('mousedown', (ev) => {
   const e = ev as MouseEvent; const t = e.target as HTMLElement;
+  playhead = frameAtX(e.clientX); movePlayhead(); // clicking anywhere on the timeline moves the red line
   const mk = t.closest('[data-marker]') as HTMLElement | null; if (mk) { apply('marker.remove', { markerId: mk.dataset.marker }); render(); return; }
   const clipEl = t.closest('[data-clip]') as HTMLElement | null;
   if (!clipEl) { // empty timeline space (Select tool) -> position + drag the playhead
@@ -177,6 +203,10 @@ window.addEventListener('mouseup', () => { if (!drag) return; const d = drag; co
 document.addEventListener('click', (e) => {
   const t = e.target as HTMLElement;
   const irow = t.closest('.irow') as HTMLElement | null; if (irow) { selected = irow.dataset.clip!; render(); return; }
+  const fav = t.closest('[data-fav]') as HTMLElement | null; if (fav) { const n = fav.dataset.fav!; favorites.has(n) ? favorites.delete(n) : favorites.add(n); renderBrowser(); return; }
+  const ov = t.closest('[data-orgview]') as HTMLElement | null; if (ov) { orgView = ov.dataset.orgview as any; renderBrowser(); return; }
+  const oc = t.closest('[data-orgcol]') as HTMLElement | null; if (oc) { orgCollection = oc.dataset.orgcol!; renderBrowser(); return; }
+  const oa = t.closest('[data-orgadd]') as HTMLElement | null; if (oa) { const n = prompt('New bin name'); if (n) { bins.set(n, new Set()); orgCollection = 'bin:' + n; renderBrowser(); } return; }
   const asset = t.closest('[data-asset]') as HTMLElement | null; if (asset) { appendAsset(asset.dataset.asset!); render(); return; }
   const toolBtn = t.closest('[data-tool]') as HTMLElement | null; if (toolBtn) { tool = toolBtn.dataset.tool as Tool; render(); return; }
   const act = (t.closest('[data-action]') as HTMLElement | null)?.dataset.action; if (!act) return;
@@ -184,6 +214,10 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('change', (e) => { const inp = e.target as HTMLInputElement; const prop = inp.dataset.prop; if (!prop || !selected) return; const v = Number(inp.value); if (prop === 'volume') apply('clip.setVolume', { clipId: selected, volume: v }); else if (prop === 'speed') apply('clip.setSpeed', { clipId: selected, speed: v }); else apply('clip.setTransform', { clipId: selected, transform: { [prop]: v } }); render(); });
 document.addEventListener('input', (e) => { const inp = e.target as HTMLInputElement; if (inp.dataset.prop) { const el = document.getElementById('val-' + inp.dataset.prop); if (el) el.textContent = Number(inp.value).toFixed(2); } });
+document.addEventListener('input', (e) => { const i = e.target as HTMLInputElement; if (i.id === 'orgSearch') { orgSearch = i.value; renderBrowser(); const s = document.getElementById('orgSearch') as HTMLInputElement | null; if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); } } });
+$('browserList').addEventListener('dragover', (e) => { const chip = (e.target as HTMLElement).closest('[data-bin]') as HTMLElement | null; const dt = (e as DragEvent).dataTransfer; if (chip && dt && dt.types.includes('text/vibal-asset')) { e.preventDefault(); dt.dropEffect = 'copy'; chip.classList.add('drophi'); } });
+$('browserList').addEventListener('dragleave', (e) => { (e.target as HTMLElement).closest('[data-bin]')?.classList.remove('drophi'); });
+$('browserList').addEventListener('drop', (e) => { const chip = (e.target as HTMLElement).closest('[data-bin]') as HTMLElement | null; const dt = (e as DragEvent).dataTransfer; const name = dt?.getData('text/vibal-asset'); if (chip && name) { e.preventDefault(); bins.get(chip.dataset.bin!)?.add(name); renderBrowser(); } });
 function scrub(ev: MouseEvent) { playhead = frameAtX(ev.clientX); movePlayhead(); $('hud').textContent = `${tool} · ${selected ? clipName(find(selected)!.clip) : 'no selection'} · ${tc(playhead)}`; }
 $('ruler').addEventListener('mousedown', (ev) => { scrub(ev as MouseEvent); const mv = (m: MouseEvent) => scrub(m); const up = () => { removeEventListener('mousemove', mv); removeEventListener('mouseup', up); }; addEventListener('mousemove', mv); addEventListener('mouseup', up); });
 $('zoom').addEventListener('input', (e) => { pxf = Number((e.target as HTMLInputElement).value); renderTimeline(); });

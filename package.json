@@ -11,10 +11,13 @@
     "build:demo": "esbuild demo/main.ts --bundle --format=esm --outfile=demo/bundle.js",
     "build:engine": "esbuild demo/_engine.ts --bundle --format=esm --platform=node --outfile=mcp/engine.node.mjs",
     "serve": "node demo/serve.mjs",
-    "mcp": "node mcp/server.mjs"
+    "mcp": "node mcp/server.mjs",
+    "e2e:ui": "node demo/e2e-ui.mjs",
+    "e2e:backend": "node demo/e2e-backend.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "puppeteer-core": "^24.43.1",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },

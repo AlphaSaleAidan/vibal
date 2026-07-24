@@ -50,7 +50,12 @@ function intentGenerated(b) {
   const start = gt.clips.reduce((m, c) => Math.max(m, clipEnd(c)), 0);
   return op({ type: 'clip.add', payload: { trackId: gt.id, clip: createMediaClip({ assetId: asset.id, kind: 'generated', sourceIn: 0, sourceOut: 90, timelineStart: start }), asset } });
 }
-function intentTitle(b) { const tt = trackByName('Titles', 'text', 3); return op({ type: 'text.add', payload: { trackId: tt.id, clip: createTextClip({ content: b.text || 'Title', timelineStart: Math.round((b.atSeconds || 0) * 30), timelineDurationFrames: Math.round((b.seconds || 2) * 30) }) } }); }
+function intentTitle(b) {
+  const tt = trackByName('Titles', 'text', 3); const dur = Math.round((b.seconds || 2) * 30);
+  let start = Math.round((b.atSeconds || 0) * 30);
+  for (const c of [...tt.clips].sort((x, y) => x.timelineStart - y.timelineStart)) { const s = c.timelineStart, e = clipEnd(c); if (start < e && s < start + dur) start = e; }
+  return op({ type: 'text.add', payload: { trackId: tt.id, clip: createTextClip({ content: b.text || 'Title', timelineStart: start, timelineDurationFrames: dur }) } });
+}
 function intentMarker(b) { return op({ type: 'marker.add', payload: { marker: createMarker({ frame: Math.round((b.atSeconds || 0) * 30), name: b.label || 'marker', color: '#f5c518' }) } }); }
 const fr = (s) => Math.round((s || 0) * 30);
 
@@ -82,6 +87,7 @@ const ROUTES = {
 
 createServer(async (req, res) => {
   const p = decodeURIComponent((req.url || '/').split('?')[0]);
+  if (p === '/favicon.ico') { res.writeHead(204); return res.end(); }
   if (req.method === 'OPTIONS') { res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'GET,POST,OPTIONS' }); return res.end(); }
   const route = ROUTES[`${req.method} ${p}`];
   if (route) { try { const body = req.method === 'POST' ? await readBody(req) : {}; return json(res, await route(body)); } catch (e) { return json(res, { ok: false, error: String(e) }, 400); } }
