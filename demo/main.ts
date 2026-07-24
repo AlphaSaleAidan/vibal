@@ -145,7 +145,12 @@ function snap(f: number, t: number[]): { f: number; hit: number | null } { const
 $('tlbody').addEventListener('mousedown', (ev) => {
   const e = ev as MouseEvent; const t = e.target as HTMLElement;
   const mk = t.closest('[data-marker]') as HTMLElement | null; if (mk) { apply('marker.remove', { markerId: mk.dataset.marker }); render(); return; }
-  const clipEl = t.closest('[data-clip]') as HTMLElement | null; if (!clipEl) return; const id = clipEl.dataset.clip!; selected = id;
+  const clipEl = t.closest('[data-clip]') as HTMLElement | null;
+  if (!clipEl) { // empty timeline space (Select tool) -> position + drag the playhead
+    if (tool === 'select') { scrub(e); const mv = (m: MouseEvent) => scrub(m); const up = () => { removeEventListener('mousemove', mv); removeEventListener('mouseup', up); }; addEventListener('mousemove', mv); addEventListener('mouseup', up); }
+    return;
+  }
+  const id = clipEl.dataset.clip!; selected = id;
   if (tool === 'blade') { bladeAt(frameAtX(e.clientX)); render(); return; }
   const c = find(id)!.clip as any; const handle = t.getAttribute('data-handle');
   drag = { mode: handle === 'l' ? 'l' : handle === 'r' ? 'r' : 'move', clipId: id, trackId: find(id)!.track.id, startX: e.clientX, orig: { start: c.timelineStart, in: c.sourceIn, out: c.sourceOut, dur: c.timelineDurationFrames, media: c.kind !== 'text', avail: d0().assets[c.assetId]?.durationFrames ?? 1e6 }, el: clipEl, snaps: snapTargets(id) };
