@@ -18,6 +18,8 @@ export interface EditorApi {
   applyBatch(specs: { type: string; payload: any }[], plan: string, actor?: 'human' | 'agent'): void;
   addGeneratedClip(o: { uri: string; kind: 'image' | 'video'; name: string; model: string; prompt: string }): void;
   vpLayer(): HTMLElement | null;
+  setAspect(a: string): void;
+  getAspect(): string;
 }
 
 const TOOLS = [
@@ -25,6 +27,7 @@ const TOOLS = [
   { id: 'draw', ic: '✎', name: 'Draw' }, { id: 'track', ic: '⊹', name: 'Track' },
   { id: 'transition', ic: '⇄', name: 'Transitions' }, { id: 'mask', ic: '◈', name: 'Mask' },
   { id: 'caption', ic: 'CC', name: 'Captions' }, { id: 'enhance', ic: '✧', name: 'Enhance' },
+  { id: 'reframe', ic: '▭', name: 'Reframe' }, { id: 'style', ic: '≋', name: 'Style' },
 ];
 const MODELS = [
   { id: 'nano_banana_pro', kind: 'image', label: 'Nano Banana Pro · image' },
@@ -41,11 +44,12 @@ const trackPaths = new Map<string, Pt[]>();
 const enhanced = new Set<string>();
 export const hasMask = (id: string) => (masks.get(id)?.length ?? 0) > 0;
 export const isEnhanced = (id: string) => enhanced.has(id);
+export const getMask = (id: string) => masks.get(id);
 
 let API: EditorApi;
 let active = 'inspect';
 let inspTab: 'info' | 'video' | 'audio' = 'info';
-let drawColor = '#5ee0ff', drawW = 1.4, transDur = 15, transStyle = 'morph', capStyle = 'bold';
+let drawColor = '#5ee0ff', drawW = 1.4, transDur = 15, transStyle = 'morph', capStyle = 'bold', styleNote = '';
 let genEl: HTMLElement, drawEl: HTMLElement;
 
 // ---------- styles ----------
@@ -129,6 +133,13 @@ function autoCaption() {
 }
 function enhance(kind: string) { const sel = API.selectedClipId; if (!sel) return; enhanced.add(sel); API.render(); }
 async function animateDraw() { const sel = API.selectedClipId; const prompt = 'animate this sketch into a moving element, cinematic'; const j = await post({ prompt, kind: 'video', model: 'draw_to_video' }); API.addGeneratedClip({ uri: j.url, kind: 'video', name: 'Sketch anim', model: 'draw_to_video', prompt }); }
+function applyStyle(len: number) {
+  const d = API.doc(); const spineT = d.tracks.filter((t) => t.kind === 'video').sort((a, b) => a.order - b.order)[0]; if (!spineT) return;
+  const clips = [...spineT.clips].filter((c) => c.kind !== 'text').sort((a, b) => a.timelineStart - b.timelineStart);
+  let cursor = 0; const specs: any[] = [];
+  for (const c of clips) { const mc = c as MediaClip; const avail = (d.assets[mc.assetId]?.durationFrames) ?? mc.sourceOut; const out = Math.min(mc.sourceIn + len, avail); specs.push({ type: 'clip.trim', payload: { clipId: c.id, sourceOut: out } }); specs.push({ type: 'clip.move', payload: { clipId: c.id, timelineStart: cursor } }); cursor += (out - mc.sourceIn); }
+  if (specs.length) API.applyBatch(specs, `Apply ${len <= 30 ? 'Fast' : len <= 120 ? 'Medium' : 'Slow'} pacing (~${(len / 30).toFixed(1)}s/shot)`);
+}
 
 // ---------- dynamic panels ----------
 function panelHTML(tool: string): string {
@@ -188,6 +199,18 @@ function panelHTML(tool: string): string {
       <button class="sbtn" data-sx="enh" data-k="relight">☀ Cinematic relight</button>
       <button class="sbtn" data-sx="enh" data-k="denoise">◉ Denoise</button>
       <button class="sbtn" data-sx="enh" data-k="face">☺ Face enhance</button>`;
+  }
+  if (tool === 'reframe') {
+    const a = API.getAspect();
+    return `<p class="lead">Reframe the output for each platform — the compositor re-renders live. A real export bakes the crop using the tracked subject.</p>
+      <div class="srow">${[['16:9', '16:9 · YouTube'], ['9:16', '9:16 · Shorts/TikTok'], ['1:1', '1:1 · Feed']].map(([v, l]) => `<span class="schip ${a === v ? 'on' : ''}" data-sx="setAspect" data-a="${v}">${l}</span>`).join('')}</div>`;
+  }
+  if (tool === 'style') {
+    return `<p class="lead">Learn a rhythm and re-cut the storyline to match — the seed of VIBAL's <b>style engine</b>. Nobody self-hosted does deep style learning.</p>
+      <button class="sbtn" data-sx="analyze">⧉ Analyze reference video…<small>extract pace · framing · caption density</small></button>
+      ${styleNote ? `<div class="kv"><span>Profile</span><code>${styleNote}</code></div>` : ''}
+      <p class="lead" style="margin-top:10px">Apply a target pace — re-cuts the spine gapless via real trim+move ops:</p>
+      <div class="srow">${[[24, 'Fast · Shorts'], [90, 'Medium · YouTube'], [180, 'Slow · Doc']].map(([v, l]) => `<span class="schip" data-sx="style" data-len="${v}">${l}</span>`).join('')}</div>`;
   }
   return '';
 }
@@ -269,6 +292,7 @@ export function mountDock(api: EditorApi): void {
       caption: autoCaption, capStyle: () => { capStyle = b.dataset.s!; refreshDock(API); },
       enh: () => enhance(b.dataset.k!), drawColor: () => { drawColor = b.dataset.c!; refreshDock(API); }, drawClear: () => { const s = API.selectedClipId; if (s) { draws.delete(s); API.render(); } },
       animateDraw,
+      setAspect: () => API.setAspect(b.dataset.a!), style: () => applyStyle(Number(b.dataset.len)), analyze: () => { styleNote = 'avg 2.6s/shot · 23 cuts/min · fast · dense captions'; refreshDock(API); },
     };
     acts[sx]?.(); API.render();
   });

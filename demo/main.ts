@@ -4,7 +4,8 @@
 import { createDocument, createTrack, createMediaClip, createAsset, createTextClip, createMarker } from '../src/document/factory';
 import { CommandLog } from '../src/oplog/log';
 import type { VibalDocument, Clip, Track, MediaClip, TextClip, Asset } from '../src/document/types';
-import { mountDock, refreshDock, renderViewerOverlay, hasMask, isEnhanced, type EditorApi } from './studio';
+import { mountDock, refreshDock, renderViewerOverlay, hasMask, isEnhanced, getMask, type EditorApi } from './studio';
+import { renderComposite } from './compositor';
 
 const FPS = 30;
 type Tool = 'select' | 'blade';
@@ -14,6 +15,7 @@ let spineTrackId = '';
 let selected: string | null = null;
 let tool: Tool = 'select';
 let playhead = 0, playing = false, pxf = 3;
+let previewAspect = '16:9';
 let lastBatch: string | null = null;
 
 function buildSample(): void {
@@ -69,9 +71,10 @@ function renderBrowser(): void {
   $('browserList').innerHTML = Object.values(d0().assets).map((a) => { const audio = a.kind === 'audio'; const vh = 200 + (hue(a.originalName) % 46); const bg = audio ? 'linear-gradient(180deg,#274b38,#1e3a2b)' : `linear-gradient(120deg,hsl(${vh} 42% 32%),hsl(${vh + 16} 38% 20%))`; return `<div class="media" data-asset="${a.originalName}"><div class="thumb" style="background:${bg}"><span class="k">${a.kind}</span></div><div><div class="mname">${a.originalName}</div><div class="mmeta">${a.durationFrames ?? '—'}f · ${a.kind}</div></div></div>`; }).join('');
 }
 function renderViewer(): void {
-  const c = clipAtPlayhead(); const st = $('stage');
-  if (c) { const col = clipClass(c) === 'title' ? 'var(--title)' : clipClass(c) === 'audio' ? 'var(--audio)' : 'var(--video)'; st.innerHTML = `<div class="card"><div class="swatch" style="background:${col}"></div><div class="big">${clipName(c)}</div><div class="sub">frame ${Math.round(playhead)} · no pixel renderer yet — Phase 2 wires WebCodecs here</div></div><div id="vpLayer"></div>`; }
-  else st.innerHTML = `<div class="card"><div class="big" style="color:#3a3a40">no clip under playhead</div></div><div id="vpLayer"></div>`;
+  const st = $('stage'); st.style.aspectRatio = previewAspect.replace(':', '/');
+  st.innerHTML = `<canvas id="vcanvas"></canvas><div id="vpLayer"></div><div class="vnote" id="vnote"></div>`;
+  renderComposite($('vcanvas') as HTMLCanvasElement, d0(), playhead, { aspect: previewAspect, mask: getMask, requestRedraw: renderViewer });
+  const c = clipAtPlayhead(); $('vnote').textContent = `${c ? clipName(c) : '—'} · procedural preview (drop in footage / WebCodecs for source frames)`;
   $('tc').textContent = tc(playhead); $('playBtn').textContent = playing ? '⏸' : '▶';
   renderViewerOverlay(api);
 }
@@ -163,6 +166,7 @@ export const api: EditorApi = {
   doc: d0, find, clipName, FPS, render, apply, applyBatch, addGeneratedClip,
   vpLayer: () => document.getElementById('vpLayer'),
   clipEnd,
+  setAspect: (a) => { previewAspect = a; }, getAspect: () => previewAspect,
 };
 
 buildSample(); mountDock(api);
