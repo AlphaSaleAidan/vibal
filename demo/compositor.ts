@@ -4,10 +4,24 @@
 // Procedural fills stand in for source footage until WebCodecs decodes real video files.
 import type { VibalDocument, Clip, MediaClip, TextClip } from '../src/document/types';
 
-export interface CompCtx { aspect: string; mask: (id: string) => Array<{ x: number; y: number }> | undefined; requestRedraw: () => void; }
+export interface CompCtx { aspect: string; mask: (id: string) => Array<{ x: number; y: number }> | undefined; requestRedraw: () => void; playing?: boolean; }
 
 const AS: Record<string, [number, number]> = { '16:9': [1280, 720], '9:16': [720, 1280], '1:1': [900, 900] };
 const imgCache = new Map<string, HTMLImageElement>();
+
+// ---- video decoder pool: one <video> per source, seek-on-scrub, play-through on playback ----
+const videoPool = new Map<string, HTMLVideoElement>();
+const isVideoUri = (u: string) => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(u);
+function getVideo(uri: string, redraw: () => void): HTMLVideoElement {
+  let v = videoPool.get(uri);
+  if (!v) { v = document.createElement('video'); v.muted = true; (v as any).playsInline = true; v.preload = 'auto'; v.loop = false; v.style.display = 'none'; v.src = uri; document.body.appendChild(v); v.addEventListener('loadeddata', redraw); v.addEventListener('seeked', redraw); videoPool.set(uri, v); }
+  return v;
+}
+function syncVideo(v: HTMLVideoElement, target: number, playing: boolean) {
+  if (playing) { if (v.paused) { try { if (Math.abs(v.currentTime - target) > 0.3) v.currentTime = target; v.play(); } catch { /* */ } } else if (Math.abs(v.currentTime - target) > 0.4) v.currentTime = target; }
+  else { if (!v.paused) v.pause(); if (Math.abs(v.currentTime - target) > 0.04) { try { v.currentTime = target; } catch { /* */ } } }
+}
+const cover = (g: CanvasRenderingContext2D, iw: number, ih: number, W: number, H: number, draw: (x: number, y: number, w: number, h: number) => void) => { const r = Math.max(W / iw, H / ih); draw((W - iw * r) / 2, (H - ih * r) / 2, iw * r, ih * r); };
 const hue = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h % 360; };
 const clipEnd = (c: Clip) => c.timelineStart + c.timelineDurationFrames;
 const nameOf = (d: VibalDocument, c: Clip) => c.kind === 'text' ? (c as TextClip).text.content : (d.assets[(c as MediaClip).assetId]?.originalName ?? c.kind);
@@ -48,7 +62,15 @@ function drawClip(g: CanvasRenderingContext2D, d: VibalDocument, c: Clip, f: num
   if (mask && mask.length > 2) { g.beginPath(); mask.forEach((p, i) => { const x = p.x * W, y = p.y * H; i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.closePath(); g.clip(); }
   const asset = d.assets[(c as MediaClip).assetId];
   const img = asset?.uri ? getImg(asset.uri, ctx.requestRedraw) : null;
-  if (img) { const r = Math.max(W / img.naturalWidth, H / img.naturalHeight); const iw = img.naturalWidth * r, ih = img.naturalHeight * r; g.drawImage(img, (W - iw) / 2, (H - ih) / 2, iw, ih); }
+  if (img) { cover(g, img.naturalWidth, img.naturalHeight, W, H, (x, y, w, h) => g.drawImage(img, x, y, w, h)); }
+  else if (asset?.uri && isVideoUri(asset.uri)) {
+    const v = getVideo(asset.uri, ctx.requestRedraw);
+    if (v.readyState >= 2 && v.videoWidth) {
+      const speed = (c as MediaClip).speed || 1;
+      syncVideo(v, ((c as MediaClip).sourceIn + (f - c.timelineStart) * speed) / 30, !!ctx.playing);
+      cover(g, v.videoWidth, v.videoHeight, W, H, (x, y, w, h) => g.drawImage(v, x, y, w, h));
+    } else drawProcedural(g, d, c, f, W, H);
+  }
   else drawProcedural(g, d, c, f, W, H);
   g.restore();
 }

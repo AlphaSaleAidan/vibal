@@ -26,6 +26,8 @@ function seed() {
   add(V1.id, intro, 0, 90, 0); add(V1.id, talk, 0, 150, 90); add(V1.id, close, 100, 190, 240); add(V2.id, bcut, 0, 80, 120);
   log.apply({ type: 'text.add', payload: { trackId: TT.id, clip: createTextClip({ content: 'VIBAL', timelineStart: 0, timelineDurationFrames: 60 }) } });
   add(A1.id, music, 0, 330, 0, 'audio');
+  const sample = createAsset({ contentHash: 'sv', kind: 'video', originalName: 'Sample Clip', durationFrames: 300, uri: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4' });
+  log.apply({ type: 'clip.add', payload: { trackId: V1.id, clip: createMediaClip({ assetId: sample.id, kind: 'video', sourceIn: 0, sourceOut: 90, timelineStart: 330 }), asset: sample } });
   return { log, spineId: V1.id, version: 0 };
 }
 const S = seed();

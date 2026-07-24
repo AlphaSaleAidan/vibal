@@ -140,6 +140,18 @@ function applyStyle(len: number) {
   for (const c of clips) { const mc = c as MediaClip; const avail = (d.assets[mc.assetId]?.durationFrames) ?? mc.sourceOut; const out = Math.min(mc.sourceIn + len, avail); specs.push({ type: 'clip.trim', payload: { clipId: c.id, sourceOut: out } }); specs.push({ type: 'clip.move', payload: { clipId: c.id, timelineStart: cursor } }); cursor += (out - mc.sourceIn); }
   if (specs.length) API.applyBatch(specs, `Apply ${len <= 30 ? 'Fast' : len <= 120 ? 'Medium' : 'Slow'} pacing (~${(len / 30).toFixed(1)}s/shot)`);
 }
+function analyzeProject() {
+  const d = API.doc(); const spineT = d.tracks.filter((t) => t.kind === 'video').sort((a, b) => a.order - b.order)[0];
+  const clips = spineT ? spineT.clips.filter((c) => c.kind !== 'text') : [];
+  const totalF = clips.reduce((m, c) => Math.max(m, c.timelineStart + c.timelineDurationFrames), 0) || 1;
+  const mins = totalF / 30 / 60 || 1;
+  const avg = (clips.reduce((s, c) => s + c.timelineDurationFrames, 0) / (clips.length || 1)) / 30;
+  const broll = d.tracks.filter((t) => t.kind === 'video' && t !== spineT).flatMap((t) => t.clips).reduce((s, c) => s + c.timelineDurationFrames, 0);
+  const caps = d.tracks.filter((t) => t.kind === 'text').flatMap((t) => t.clips).length;
+  const band = avg < 1.2 ? 'fast' : avg < 4 ? 'medium' : 'slow';
+  styleNote = `${clips.length} shots · ${avg.toFixed(1)}s avg · ${(clips.length / mins).toFixed(1)} cuts/min · ${Math.round(broll / totalF * 100)}% b-roll · ${Math.round(caps / mins)} caps/min → ${band}`;
+  refreshDock(API);
+}
 
 // ---------- dynamic panels ----------
 function panelHTML(tool: string): string {
@@ -292,7 +304,7 @@ export function mountDock(api: EditorApi): void {
       caption: autoCaption, capStyle: () => { capStyle = b.dataset.s!; refreshDock(API); },
       enh: () => enhance(b.dataset.k!), drawColor: () => { drawColor = b.dataset.c!; refreshDock(API); }, drawClear: () => { const s = API.selectedClipId; if (s) { draws.delete(s); API.render(); } },
       animateDraw,
-      setAspect: () => API.setAspect(b.dataset.a!), style: () => applyStyle(Number(b.dataset.len)), analyze: () => { styleNote = 'avg 2.6s/shot · 23 cuts/min · fast · dense captions'; refreshDock(API); },
+      setAspect: () => API.setAspect(b.dataset.a!), style: () => applyStyle(Number(b.dataset.len)), analyze: analyzeProject,
     };
     acts[sx]?.(); API.render();
   });

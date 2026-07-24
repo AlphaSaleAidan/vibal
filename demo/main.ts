@@ -37,6 +37,10 @@ function buildSample(): void {
   add(V2.id, bcut, 0, 80, 120);
   log.apply({ type: 'text.add', payload: { trackId: TT.id, clip: createTextClip({ content: 'VIBAL', timelineStart: 0, timelineDurationFrames: 60 }) } });
   add(A1.id, music, 0, 330, 0, 'audio'); add(A2.id, vo, 0, 150, 90, 'audio');
+  // a real streamable video (CC) so the video decoder path is demonstrable end-to-end
+  const sample = createAsset({ contentHash: 'sv', kind: 'video', originalName: 'Sample Clip', durationFrames: 300, uri: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4' });
+  assetIds['Sample Clip'] = sample.id;
+  log.apply({ type: 'clip.add', payload: { trackId: V1.id, clip: createMediaClip({ assetId: sample.id, kind: 'video', sourceIn: 0, sourceOut: 90, timelineStart: 330 }), asset: sample } });
   selected = null; playhead = 0; playing = false; lastBatch = null;
 }
 
@@ -85,14 +89,16 @@ function addGeneratedClip(o: { uri: string; kind: 'image' | 'video'; name: strin
 function renderBrowser(): void {
   $('browserList').innerHTML = Object.values(d0().assets).map((a) => { const audio = a.kind === 'audio'; const vh = 200 + (hue(a.originalName) % 46); const bg = audio ? 'linear-gradient(180deg,#274b38,#1e3a2b)' : `linear-gradient(120deg,hsl(${vh} 42% 32%),hsl(${vh + 16} 38% 20%))`; return `<div class="media" data-asset="${a.originalName}"><div class="thumb" style="background:${bg}"><span class="k">${a.kind}</span></div><div><div class="mname">${a.originalName}</div><div class="mmeta">${a.durationFrames ?? '—'}f · ${a.kind}</div></div></div>`; }).join('');
 }
-function renderViewer(): void {
-  const st = $('stage'); st.style.aspectRatio = previewAspect.replace(':', '/');
-  st.innerHTML = `<canvas id="vcanvas"></canvas><div id="vpLayer"></div><div class="vnote" id="vnote"></div>`;
-  renderComposite($('vcanvas') as HTMLCanvasElement, d0(), playhead, { aspect: previewAspect, mask: getMask, requestRedraw: renderViewer });
-  const c = clipAtPlayhead(); $('vnote').textContent = `${c ? clipName(c) : '—'} · procedural preview (drop in footage / WebCodecs for source frames)`;
+// Draw-only: repaint the persistent canvas (never rebuilds DOM). Cheap enough for 60fps playback.
+function drawViewer(): void {
+  renderComposite($('vcanvas') as HTMLCanvasElement, d0(), playhead, { aspect: previewAspect, mask: getMask, requestRedraw: drawViewer, playing });
+  const c = clipAtPlayhead();
+  $('vnote').textContent = `${c ? clipName(c) : '—'} · ${(playhead / FPS).toFixed(2)}s`;
   $('tc').textContent = tc(playhead); $('playBtn').textContent = playing ? '⏸' : '▶';
-  renderViewerOverlay(api);
 }
+// Playback/scrub path: move the playhead element + redraw the canvas ONLY (no timeline rebuild).
+function movePlayhead(): void { const ph = document.getElementById('playhead'); if (ph) ph.style.left = (playhead * pxf).toFixed(1) + 'px'; drawViewer(); }
+function renderViewer(): void { $('stage').style.aspectRatio = previewAspect.replace(':', '/'); drawViewer(); renderViewerOverlay(api); }
 function renderTimeline(): void {
   const d = d0(); const dur = Math.max(d.durationFrames, 300); const laneH = 54;
   const above = d.tracks.filter((t) => t.id !== spineTrackId && t.kind !== 'audio' && t.kind !== 'effect').sort((a, b) => a.order - b.order);
@@ -169,14 +175,14 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('change', (e) => { const inp = e.target as HTMLInputElement; const prop = inp.dataset.prop; if (!prop || !selected) return; const v = Number(inp.value); if (prop === 'volume') apply('clip.setVolume', { clipId: selected, volume: v }); else if (prop === 'speed') apply('clip.setSpeed', { clipId: selected, speed: v }); else apply('clip.setTransform', { clipId: selected, transform: { [prop]: v } }); render(); });
 document.addEventListener('input', (e) => { const inp = e.target as HTMLInputElement; if (inp.dataset.prop) { const el = document.getElementById('val-' + inp.dataset.prop); if (el) el.textContent = Number(inp.value).toFixed(2); } });
-function scrub(ev: MouseEvent) { playhead = frameAtX(ev.clientX); renderViewer(); renderTimeline(); $('hud').textContent = `${tool} · ${selected ? clipName(find(selected)!.clip) : 'no selection'} · ${tc(playhead)}`; }
+function scrub(ev: MouseEvent) { playhead = frameAtX(ev.clientX); movePlayhead(); $('hud').textContent = `${tool} · ${selected ? clipName(find(selected)!.clip) : 'no selection'} · ${tc(playhead)}`; }
 $('ruler').addEventListener('mousedown', (ev) => { scrub(ev as MouseEvent); const mv = (m: MouseEvent) => scrub(m); const up = () => { removeEventListener('mousemove', mv); removeEventListener('mouseup', up); }; addEventListener('mousemove', mv); addEventListener('mouseup', up); });
 $('zoom').addEventListener('input', (e) => { pxf = Number((e.target as HTMLInputElement).value); renderTimeline(); });
 window.addEventListener('keydown', (e) => { if ((e.target as HTMLElement).matches('input,textarea,select')) return; const meta = e.metaKey || e.ctrlKey; if (meta && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; } const map: Record<string, () => void> = { ' ': togglePlay, a: () => (tool = 'select'), b: () => (tool = 'blade'), m: addMarker, t: () => (selected = addTitleAt(playhead)), Delete: () => deleteSelected(e.shiftKey), Backspace: () => deleteSelected(e.shiftKey), ArrowLeft: () => (playhead = Math.max(0, playhead - (e.shiftKey ? FPS : 1))), ArrowRight: () => (playhead += e.shiftKey ? FPS : 1), '=': () => (pxf = Math.min(12, pxf + 1)), '-': () => (pxf = Math.max(1, pxf - 1)) }; const fn = map[e.key]; if (fn) { e.preventDefault(); fn(); render(); } });
 
 let raf = 0, lastT = 0;
 function togglePlay() { playing = !playing; if (playing) { lastT = performance.now(); raf = requestAnimationFrame(tick); } else cancelAnimationFrame(raf); }
-function tick(now: number) { if (!playing) return; playhead += (now - lastT) / 1000 * FPS; lastT = now; if (playhead >= d0().durationFrames) { playhead = d0().durationFrames; playing = false; } renderViewer(); renderTimeline(); if (playing) raf = requestAnimationFrame(tick); }
+function tick(now: number) { if (!playing) return; playhead += (now - lastT) / 1000 * FPS; lastT = now; if (playhead >= d0().durationFrames) { playhead = d0().durationFrames; playing = false; render(); return; } movePlayhead(); raf = requestAnimationFrame(tick); }
 
 // ---------- editor API for the studio dock ----------
 export const api: EditorApi = {
