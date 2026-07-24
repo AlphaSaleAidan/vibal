@@ -1,8 +1,8 @@
-# CUTROOM — Higgsfield API Verification
+# VIBAL — Higgsfield API Verification
 
 > Verified 2026-07-24 against **official Higgsfield sources** (JS SDK `higgsfield-ai/higgsfield-js`, Python SDK `higgsfield-ai/higgsfield-client`, `higgsfield.ai/mcp`). Third-party aggregators (Segmind, WaveSpeed, apidog) wrap Higgsfield behind their **own** gateways with their **own** auth — they are NOT the surface a stranger with a Higgsfield key hits, and are flagged where they conflict.
 >
-> **This feeds Phase 1 (provider abstraction). Do not code the REST client until the OPEN QUESTIONS below are closed against a live account.**
+> **Decision (2026-07-24): the MCP path is primary.** The hosted MCP server (`https://mcp.higgsfield.ai/mcp`) is already connected and OAuth-authenticated in our environment — no key management, bills against plan credits, exposes 30+ models. Phase 1 wires generation through MCP. The REST client (and every REST OPEN QUESTION below) is **deferred** until there's a concrete need it serves that MCP can't — at which point they're closed against a live account. A stranger cloning the public repo connects the same MCP URL and OAuths with their own Higgsfield account.
 
 ## Headline correction
 Our handoff notes said `Authorization: Bearer <key>`. **That is wrong for the official API.** The official API uses **`Authorization: Key <KEY_ID>:<KEY_SECRET>`** — a key **pair**. The `Bearer` claim comes only from a third-party wrapper (apidog) and must not be coded against.

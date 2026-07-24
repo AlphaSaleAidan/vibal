@@ -1,4 +1,4 @@
-# CUTROOM — Prior Art
+# VIBAL — Prior Art
 
 > Research date: 2026-07-24. Tool names and signatures below are extracted from **actual repo source** (GitHub trees, blob contents, official SDKs) — not marketing summaries — except where explicitly flagged as vendor claims. Each section leads with its verified sources.
 
@@ -28,7 +28,7 @@ Design philosophy (from `AGENTS.md`): tools are *"designed from user intent, not
 ### Export (from `ExportOptions.swift`)
 `enum ExportFormat`: `.h264`(mp4), `.h265`(mp4), `.prores`(mov), `.hevcHDR`(mov, Main10 BT.2020+HLG), `.xml`(Premiere-style), `.fcpxml`. Plus a native project-package export bundling *every* timeline. Resolutions 720p–4K + Match Timeline.
 
-**Takeaways for CUTROOM:** the read-returns-IDs / edit-targets-IDs contract; `capture_frame` as the agent's visual feedback loop; timeline-nesting as the versioning primitive; the FCPXML + generic-XML escape hatches; the open-editor / paid-generation split.
+**Takeaways for VIBAL:** the read-returns-IDs / edit-targets-IDs contract; `capture_frame` as the agent's visual feedback loop; timeline-nesting as the versioning primitive; the FCPXML + generic-XML escape hatches; the open-editor / paid-generation split.
 
 ---
 

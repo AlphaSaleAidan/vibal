@@ -1,8 +1,10 @@
-# CUTROOM — Timeline Document & Command Log (v1 schema)
+# VIBAL — Timeline Document & Command Log (v1 schema)
 
 > **Draft for review. Nothing downstream gets built until this is approved.** (Handoff §4, §11.)
 >
 > The core contract of the whole product: **the AI never renders a video — it edits this document through the command log; the document renders the video.** Human direct-manipulation, conversational edits, and agentic batches all emit the same ops against the same document.
+>
+> **Resolved decisions (2026-07-24):** rational frame rate `{num,den}` confirmed (Q2); `marker.update`/`marker.remove` promoted into v1 (Q3, §4.2); asset bytes live in object storage, never the render host's disk (§1.1).
 
 ---
 
@@ -10,7 +12,7 @@
 
 1. **Ops are the only mutation path.** The UI emits ops; the agent emits ops. No code anywhere mutates the document object directly. Enforced by (a) a lint rule banning assignment into the document tree outside the reducer, and (b) a runtime guard — the in-memory document is deep-frozen (`Object.freeze`) so a stray direct mutation *throws*. **Red-first Phase 0 proof:** a test that attempts a direct field write and asserts it throws.
 2. **Every entity has a stable UUID.** Agents reference entities by `id`, never by index or timeline position. IDs are prefixed by kind (`clip_`, `track_`, `asset_`, `op_`, `tr_`, `mk_`, `fx_`, `kf_`) for log readability.
-3. **Assets are content-addressed.** Referenced by `contentHash`, never by absolute path — projects are portable between the Ubuntu dev box and the VPS.
+3. **Assets are content-addressed.** Referenced by `contentHash`, never by absolute path — projects are portable across the GPU box, object storage, and the coordinator (see §1.1).
 4. **Provenance on every element.** `provenance.createdBy: "human" | "agent" | "import"` + the `opId` (and `batchId`) that created it. The UI can highlight everything the AI touched at a glance.
 5. **Deterministic time.** All times are **integer frame counts**. Frame rate is **rational** (`{ num, den }`) to represent 23.976/29.97/59.94 without drift. No floating-point seconds in the document.
 6. **Append-only, replayable history.** The op log is the source of truth for edit history; the document is a materialized view you can rebuild by replaying ops from empty.
@@ -39,7 +41,7 @@
   "meta": {
     "createdAt": "2026-07-24T00:00:00Z",     // ISO; caller-supplied (no ambient clock in reducer)
     "modifiedAt": "2026-07-24T00:00:00Z",
-    "app": "cutroom",
+    "app": "vibal",
     "opSeq": 0                                // last applied op seq — see §4
   }
 }
@@ -49,6 +51,16 @@ Notes:
 - `durationFrames`, `meta.modifiedAt`, `meta.opSeq` are **derived/bookkeeping** — recomputed by the reducer, never authored by ops directly.
 - The document is fully **lossless JSON**: serialize → deserialize → deep-equal is a Phase 0 test (distinct from the lossy OTIO/FCPXML round-trip, §5).
 
+### 1.1 Storage & compute topology (deployment constraint)
+
+The document holds only **references** (`asset.uri = "vibal-asset://<hash>"`), never bytes. Where the bytes live and where work runs is fixed by the hardware reality:
+
+- **Media bytes → object storage** (Supabase Storage / S3-compatible bucket), content-addressed by hash. **Never the Contabo VPS filesystem** — that box has no GPU and limited disk; it must not accumulate footage.
+- **GPU/render work** (FFmpeg transcode + final render, faster-whisper transcription, PySceneDetect analysis) runs on the **GPU box** where the repo also runs, or is dispatched to a worker there. The Contabo VPS is fine for stateless coordination (the app, the Valkey queue, orchestration) but is not a media host and not a render host.
+- **Generation** (Higgsfield) is remote/cloud regardless — no local GPU needed; outputs are pulled into object storage as new content-addressed assets.
+
+This is why assets are content-addressed: a project moves across the GPU box, object storage, and the coordinator with no absolute paths anywhere.
+
 ## 2. Assets (content-addressed)
 
 ```jsonc
@@ -56,7 +68,7 @@ Notes:
   "id": "asset_9c1a…",
   "contentHash": "sha256:9c1a…",       // identity; dedupes re-imports
   "kind": "video" | "audio" | "image",
-  "uri": "cutroom-asset://9c1a…",       // resolved by the asset store; NEVER an absolute path
+  "uri": "vibal-asset://9c1a…",       // resolved by the asset store; NEVER an absolute path
   "originalName": "a-roll_01.mov",
   "durationFrames": 1800,               // null for still images
   "frameRate": { "num": 24, "den": 1 }, // source rate (may differ from timeline rate)
@@ -247,7 +259,7 @@ Every mutation is an **op**. Ops carry their own **inverse**, so undo = apply th
 ```
 The UI streams a batch's ops in with a visible animation (so you watch the edit happen) and offers **"revert this batch"** (apply inverses of all opIds in reverse order) and **"revert this single op."**
 
-### 4.2 v1 op types (all 22 required by handoff §4)
+### 4.2 v1 op types (24 — the 22 required by handoff §4, plus `marker.update`/`marker.remove`)
 
 Each op below lists **payload** → and how its **inverse** is formed. All target entities by `id`.
 
@@ -272,18 +284,20 @@ Each op below lists **payload** → and how its **inverse** is formed. All targe
 | `transition.add` | `{ transition }` | `transition.remove { transitionId }` |
 | `transition.remove` | `{ transitionId }` | `transition.add { transition }` (snapshot) |
 | `marker.add` | `{ marker }` | `marker.remove { markerId }` |
+| `marker.update` | `{ markerId, fields }` (partial merge: `frame`/`name`/`color`) | `marker.update` prior fields |
+| `marker.remove` | `{ markerId }` | `marker.add { marker }` (snapshot) |
 | `ripple.delete` | `{ trackId, startFrame, endFrame }` → removes content in range and shifts downstream clips left by the gap | composite inverse: re-insert removed clips + shift downstream right (stored in inverse payload as a clip snapshot list + shift amount) |
 | `audio.duck` | `{ clipId, underClipId?, targetGain, attackFrames, releaseFrames }` → writes `volume` keyframes | inverse restores prior `volume` keyframes (snapshot) |
 | `audio.setRamp` | `{ clipId, fromGain, toGain, startFrame, endFrame }` → writes `volume` keyframes | inverse restores prior `volume` keyframes (snapshot) |
 
-**Composite ops** (`clip.split`, `ripple.delete`, `audio.duck`, `audio.setRamp`) expand to primitive mutations internally but are logged as *one* op with a *single* inverse, so they undo atomically (matches OpenChatCut's "single undo step" behavior). `marker.update`/`marker.remove` beyond `marker.add` are deferred to v1.1 (only `marker.add` is required by §4; noted in OPEN_QUESTIONS).
+**Composite ops** (`clip.split`, `ripple.delete`, `audio.duck`, `audio.setRamp`) expand to primitive mutations internally but are logged as *one* op with a *single* inverse, so they undo atomically (matches OpenChatCut's "single undo step" behavior). `marker.update`/`marker.remove` are included in v1 (promoted from the §4 minimum for a complete marker lifecycle).
 
 ---
 
 ## 5. Interchange (OTIO) & migration
 
 - **Native JSON is lossless.** Round-trip serialize/deserialize → deep-equal. (Phase 0 test A.)
-- **OTIO/FCPXML is intentionally lossy.** We map: document → OTIO `Timeline`; tracks → `Stack` of `Track`; media clip → `Clip` with `ExternalReference` + `source_range` (`TimeRange` of `RationalTime`); transition → `Transition`; marker → `Marker`. Fields FCPXML can't represent (keyframes on arbitrary paths, our `generation` metadata, effect params, `provenance`) are stored under an OTIO metadata namespace `"cutroom"` so an OTIO→OTIO round-trip is *lossless*, while OTIO→**FCPXML**→OTIO preserves only what FCPXML supports.
+- **OTIO/FCPXML is intentionally lossy.** We map: document → OTIO `Timeline`; tracks → `Stack` of `Track`; media clip → `Clip` with `ExternalReference` + `source_range` (`TimeRange` of `RationalTime`); transition → `Transition`; marker → `Marker`. Fields FCPXML can't represent (keyframes on arbitrary paths, our `generation` metadata, effect params, `provenance`) are stored under an OTIO metadata namespace `"vibal"` so an OTIO→OTIO round-trip is *lossless*, while OTIO→**FCPXML**→OTIO preserves only what FCPXML supports.
 - **Phase 0 red-first proof (handoff §9):** round-trip a non-trivial timeline document → OTIO → **FCPXML** → back, and assert **semantic equality on the FCPXML-supported projection** (track structure, clip source in/out, timeline positions, transitions, markers). Shown *failing first*, then made to pass. The projection is defined explicitly in the test so "semantic equality" is unambiguous — it is NOT full-document equality (that's test A on native JSON).
 - **Migration:** `schemaVersion` is semver. A `migrations/` registry maps `fromMajorMinor → toMajorMinor` transform fns; loading a document runs the chain up to current. v1.0.0 is the baseline (no-op migration).
 

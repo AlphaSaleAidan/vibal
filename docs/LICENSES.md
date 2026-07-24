@@ -1,8 +1,10 @@
-# CUTROOM — License Due-Diligence
+# VIBAL — License Due-Diligence
 
 > **This file is a Phase 0 gate.** If a dependency's license is unclear, it does not go in.
 >
-> **Constraint:** CUTROOM is a **public** GitHub repo built by a **for-profit company that will exceed 3 employees and generates revenue.** Any "free only for <4 employees" or "free only if no revenue / non-commercial" license is a **BLOCKER** for a core dependency. Verified 2026-07-24 against primary sources (LICENSE files, official pricing pages).
+> **Constraint:** VIBAL is a **public** GitHub repo built by a **for-profit company that will exceed 3 employees and generates revenue.** Any "free only for <4 employees" or "free only if no revenue / non-commercial" license is a **BLOCKER** for a core dependency. Verified 2026-07-24 against primary sources (LICENSE files, official pricing pages).
+>
+> **Chosen defaults (decided 2026-07-24):** motion-graphics engine → **Motion Canvas (MIT)** (Remotion is out); queue backend → **Valkey (BSD-3)** (not Redis 8 AGPL/SSPL); muxer → **Mediabunny (MPL-2.0) directly** (not Diffusion Studio); we do **not** vendor an FFmpeg binary — users install a default-LGPL or `--enable-gpl` build from their package manager, never `--enable-nonfree`.
 
 | Dependency | License (SPDX) | Source | Verdict |
 |---|---|---|---|
@@ -30,7 +32,7 @@
 
 ## Critical notes
 
-**FFmpeg build flags.** CUTROOM invokes `ffmpeg` as a **separate process**, not linked — mere aggregation, so neither LGPL nor GPL imposes copyleft on our source. Default **LGPL build** = essentially no obligation. A `--enable-gpl` build (Homebrew/apt default, adds x264/x265) is also fine. Hard rule: **`--enable-nonfree` (libfdk_aac etc.) is legally non-redistributable — private use only, never bundle.** **We do NOT vendor an ffmpeg binary; the README points users at their system package manager (apt/brew/winget) for a default LGPL or `--enable-gpl` build.**
+**FFmpeg build flags.** VIBAL invokes `ffmpeg` as a **separate process**, not linked — mere aggregation, so neither LGPL nor GPL imposes copyleft on our source. Default **LGPL build** = essentially no obligation. A `--enable-gpl` build (Homebrew/apt default, adds x264/x265) is also fine. Hard rule: **`--enable-nonfree` (libfdk_aac etc.) is legally non-redistributable — private use only, never bundle.** **We do NOT vendor an ffmpeg binary; the README points users at their system package manager (apt/brew/winget) for a default LGPL or `--enable-gpl` build.**
 
 **Redis → Valkey.** Both are legally fine for pure queue use (AGPL/SSPL only bites if you *modify* Redis *and* offer it as a network service; connecting via BullMQ triggers nothing, and we don't distribute it). **We default to Valkey (BSD-3-Clause, LF governance)** to remove all SSPL/AGPL reasoning from a diligence/acquisition review. Wire-compatible drop-in.
 
