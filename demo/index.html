@@ -29,7 +29,7 @@
   .iconbtn.agent{color:var(--sel);border-color:#4a3a1e}
   .iconbtn.danger:hover{background:#4a2226;border-color:#6a2f34}
 
-  .top{display:grid;grid-template-columns:262px minmax(0,1fr) 302px;min-height:0;border-bottom:1px solid var(--line)}
+  .top{display:grid;grid-template-columns:258px minmax(0,1fr) 344px;min-height:0;border-bottom:1px solid var(--line)}
   .pane{min-height:0;overflow:auto;background:var(--panel)}
   .pane+.pane{border-left:1px solid var(--line)}
   .pane .head{position:sticky;top:0;background:var(--chrome);border-bottom:1px solid var(--line);padding:7px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);z-index:2}
@@ -139,14 +139,9 @@
           <span class="tc" id="tc">00:00:00:00</span>
         </div>
       </div>
-      <div class="pane">
-        <div class="head">Inspector</div>
-        <div class="insp-tabs" id="inspTabs">
-          <button data-tab="info" class="on">Info</button>
-          <button data-tab="video">Video</button>
-          <button data-tab="audio">Audio</button>
-        </div>
-        <div class="insp-body" id="inspBody"></div>
+      <div class="pane studiopane">
+        <div class="studio-rail" id="studioRail"></div>
+        <div class="studio-panel" id="studioPanel"></div>
       </div>
     </div>
 
@@ -154,7 +149,6 @@
       <div class="grp">
         <button class="iconbtn tool on" data-tool="select">▮ Select</button>
         <button class="iconbtn tool" data-tool="blade">⊟ Blade</button>
-        <button class="iconbtn tool" data-tool="mask">◈ Mask</button>
       </div>
       <div class="sep"></div>
       <div class="grp">
